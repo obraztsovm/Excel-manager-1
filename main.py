@@ -572,11 +572,14 @@ QToolTip {
         if 'шайба' in lower_text:
             return text, "Шайба"
 
-        # ЛИСТ - только если нет слов "болт", "гайка" и т.д.
-        if ('-' in text and
-                any(char in lower_text for char in ['х', 'x']) and
-                'болт' not in lower_text and
-                'гайка' not in lower_text):
+            # ЛИСТ - ТОЛЬКО строгий паттерн: -числохчисло
+            # Пример: -6х2235, -10х1000 и т.д.
+        if (re.search(r'-\d+[хx]\d+', text, re.IGNORECASE) and
+            'болт' not in lower_text and
+            'гайка' not in lower_text and
+            'бобышка' not in lower_text and
+            'пробка' not in lower_text and
+            'шпилька' not in lower_text):
             return text, "Лист"
 
         if text.startswith(('L', 'l')):
@@ -585,9 +588,13 @@ QToolTip {
         if text.startswith('['):
             return text, "Швеллер"
 
+            # Последний случай - первое слово без цифр
         words = text.split()
         if words:
-            return text, words[0]
+            first_word = words[0]
+            # Просто убираем все не-буквы из первого слова
+            clean_word = ''.join(char for char in first_word if char.isalpha())
+            return text, clean_word or first_word
 
         return text, "Unknown"
 
