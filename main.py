@@ -1085,102 +1085,176 @@ QToolTip {
             if not output_path:
                 return
 
+            # Шаг 1: Сбор всех уникальных заголовков из столбцов S+
+            all_s_headers = set()
+            all_tables_data = []  # Будем сохранять данные всех таблиц
+
+            for file_path in file_paths:
+                try:
+                    # Обрабатываем ВСЕ листы файла
+                    xl_file = pd.ExcelFile(file_path)
+                    file_name = os.path.splitext(os.path.basename(file_path))[0]
+
+                    for sheet_name in xl_file.sheet_names:
+                        try:
+                            # Обрабатываем конкретный лист
+                            success, table_data = self.process_single_sheet_for_combined(
+                                file_path, sheet_name, user_data
+                            )
+
+                            if success:
+                                all_tables_data.append({
+                                    'file_name': file_name,
+                                    'sheet_name': sheet_name,
+                                    'data': table_data
+                                })
+
+                                # Собираем заголовки из столбцов S+ (индексы 18+)
+                                if len(table_data) > 0:
+                                    for col_idx in range(18, len(table_data[0])):
+                                        header = table_data[0][col_idx]
+                                        if header and str(header).strip():
+                                            all_s_headers.add(header)
+
+                                print(f"✓ Обработан лист: {sheet_name} в файле {file_name}")
+                            else:
+                                print(f"✗ Ошибка листа: {sheet_name} в файле {file_name}")
+
+                        except Exception as e:
+                            print(f"❌ Ошибка обработки листа {sheet_name}: {e}")
+                            continue
+
+                    print(f"✓ Обработан файл: {os.path.basename(file_path)}")
+
+                except Exception as e:
+                    print(f"❌ Ошибка открытия файла {file_path}: {e}")
+                    continue
+
+            # Выводим собранные заголовки для проверки
+            print("Собранные заголовки столбцов S+:")
+            for header in sorted(all_s_headers):
+                print(f"  - {header}")
+
+            # Если нет данных, выходим
+            if not all_tables_data:
+                QMessageBox.warning(self, "Нет данных", "Не удалось обработать ни одной таблицы.")
+                return
+
             # Создаем новую книгу с одним листом
             wb = Workbook()
             ws = wb.active
             ws.title = "Объединенные_данные"
 
             current_row = 1  # Текущая строка для вставки
-            all_headers = set()  # Для сбора всех уникальных заголовков столбцов S+
-            table_data = []  # Для хранения данных всех таблиц
 
-            # Первый проход: собираем все заголовки и данные
-            for file_path in file_paths:
-                try:
-                    xl_file = pd.ExcelFile(file_path)
-
-                    for sheet_name in xl_file.sheet_names:
-                        try:
-                            # Обрабатываем лист и получаем данные
-                            success, data = self.process_single_sheet_for_combined(
-                                file_path, sheet_name, user_data
-                            )
-
-                            if success:
-                                table_data.append(data)
-                                # Собираем заголовки из столбцов S+
-                                for col_idx in range(19, len(data[0]) + 1):
-                                    if data[0][col_idx - 1]:  # Заголовок в первой строке
-                                        all_headers.add(data[0][col_idx - 1])
-                            else:
-                                print(f"✗ Ошибка листа: {sheet_name} в файле {file_path}")
-
-                        except Exception as e:
-                            print(f"❌ Ошибка обработки листа {sheet_name}: {e}")
-                            continue
-
-                except Exception as e:
-                    print(f"❌ Ошибка открытия файла {file_path}: {e}")
-                    continue
-
-            # Второй проход: заполняем данные
-            for i, data in enumerate(table_data):
+            # Шаг 2: Заполняем столбцы A-R
+            for i, table_info in enumerate(all_tables_data):
+                table_data = table_info['data']
                 if i == 0:
-                    # Первая таблица - вставляем полностью
-                    for row_idx, row in enumerate(data):
-                        for col_idx, value in enumerate(row[:19]):  # Только A-R
-                            if value is not None:
-                                ws.cell(row=current_row + row_idx, column=col_idx + 1, value=value)
-                    current_row += len(data)
+                    # Первая таблица - вставляем полностью (все строки)
+                    for row_idx, row_data in enumerate(table_data):
+                        # Копируем только столбцы A-R (индексы 0-17)
+                        for col_idx in range(0, 18):
+                            if col_idx < len(row_data) and row_data[col_idx] is not None:
+                                ws.cell(row=current_row + row_idx, column=col_idx + 1, value=row_data[col_idx])
+                    current_row += len(table_data)
                 else:
-                    # Последующие таблицы - только 5-я строка для A-R
-                    for col_idx, value in enumerate(data[4][:19]):  # 5-я строка, только A-R
-                        if value is not None:
-                            ws.cell(row=current_row, column=col_idx + 1, value=value)
-                    current_row += 1
+                    # Последующие таблицы - только 5-я строка (индекс 4) для A-R
+                    if len(table_data) > 4:
+                        row_data = table_data[4]
+                        for col_idx in range(0, 18):
+                            if col_idx < len(row_data) and row_data[col_idx] is not None:
+                                ws.cell(row=current_row, column=col_idx + 1, value=row_data[col_idx])
+                        current_row += 1
 
-            # Часть 2: Обработка столбцов S+ будет здесь
-            # Продолжение метода process_multiple_files после заполнения A-R
+            first_table_data = all_tables_data[0]['data']
+            s_columns_data = {}  # Будет хранить данные для каждого столбца S+
 
-            # Создаем映射 заголовков к столбцам
-            header_to_col = {}
-            sorted_headers = sorted(list(all_headers))  # Сортируем заголовки для единообразия
-            for col_idx, header in enumerate(sorted_headers, start=19):  # Начинаем с столбца S
-                ws.cell(row=1, column=col_idx, value=header)
-                header_to_col[header] = col_idx
-
-            # Заполняем данные для столбцов S+
-            current_row = 5  # Начинаем с 5-й строки (после заголовков первой таблицы)
-
-            for i, data in enumerate(table_data):
-                if i == 0:
-                    # Первая таблица - все 4 строки
+            # Проходим по всем столбцам S+ первой таблицы
+            for col_idx in range(18, len(first_table_data[0])):
+                header = first_table_data[0][col_idx]  # Заголовок из первой строки
+                if header and str(header).strip():
+                    # Сохраняем все 4 строки для этого столбца
+                    column_data = []
                     for row_idx in range(4):  # Первые 4 строки
-                        for col_idx in range(19, len(data[row_idx]) + 1):
-                            header = data[0][col_idx - 1]  # Заголовок из первой строки
-                            value = data[row_idx][col_idx - 1]  # Значение
-                            if header and value is not None:
-                                ws.cell(row=row_idx + 1, column=header_to_col[header], value=value)
+                        if col_idx < len(first_table_data[row_idx]):
+                            column_data.append(first_table_data[row_idx][col_idx])
+                        else:
+                            column_data.append(None)
+                    s_columns_data[header] = column_data
 
-                    # 5-я строка первой таблицы
-                    for col_idx in range(19, len(data[4]) + 1):
-                        header = data[0][col_idx - 1]
-                        value = data[4][col_idx - 1]
+            # Создаем映射 заголовков к столбцам и заполняем все 4 строки
+            sorted_headers = sorted(list(s_columns_data.keys()))
+            header_to_col = {}
+
+            for idx, header in enumerate(sorted_headers, start=19):  # Начинаем с столбца S
+                header_to_col[header] = idx
+
+                # Записываем все 4 строки шапки
+                for row_idx, value in enumerate(s_columns_data[header]):
+                    if value is not None:
+                        ws.cell(row=row_idx + 1, column=idx, value=value)
+
+            # Шаг 4: Заполняем данные для столбцов S+
+            # Для первой таблицы заполняем 5-ю строку
+            for col_idx in range(18, len(first_table_data[4])):
+                header = first_table_data[0][col_idx]  # Заголовок из первой строки
+                value = first_table_data[4][col_idx]  # Значение из 5-й строки
+                if header and value is not None:
+                    target_col = header_to_col.get(header)
+                    if target_col:
+                        ws.cell(row=5, column=target_col, value=value)
+
+            # Для остальных таблиц заполняем только 5-ю строку
+            current_data_row = 6  # Начинаем с 6-й строки (после первой таблицы)
+            for table_info in all_tables_data[1:]:
+                table_data = table_info['data']
+                if len(table_data) > 4:
+                    for col_idx in range(18, len(table_data[4])):
+                        header = table_data[0][col_idx]  # Заголовок из первой строки
+                        value = table_data[4][col_idx]  # Значение из 5-й строки
                         if header and value is not None:
-                            ws.cell(row=5, column=header_to_col[header], value=value)
+                            target_col = header_to_col.get(header)
+                            if target_col:
+                                ws.cell(row=current_data_row, column=target_col, value=value)
+                    current_data_row += 1
 
-                else:
-                    # Последующие таблицы - только 5-я строка
-                    for col_idx in range(19, len(data[4]) + 1):
-                        header = data[0][col_idx - 1]
-                        value = data[4][col_idx - 1]
-                        if header and value is not None:
-                            ws.cell(row=current_row, column=header_to_col[header], value=value)
+            # Добавляем этот код перед сохранением файла
+            thick_border = Border(
+                left=Side(style='thick', color='000000'),
+                right=Side(style='thick', color='000000'),
+                top=Side(style='thick', color='000000'),
+                bottom=Side(style='thick', color='000000')
+            )
 
-                    current_row += 1
+            # Применяем жирные границы ко всем ячейкам
+            for row in ws.iter_rows():
+                for cell in row:
+                    cell.border = thick_border
 
+            # Добавляем столбец "Конец" в самый правый столбец
+            max_col = ws.max_column
+            end_col = max_col + 1
+
+            # Записываем "Конец" в первую строку нового столбца
+            ws.cell(row=1, column=end_col, value="Конец")
+            end_cell = ws.cell(row=1, column=end_col)
+            end_cell.font = Font(bold=True)  # Жирный шрифт
+            end_cell.border = Border(
+                left=Side(style='thick', color='000000'),
+                right=Side(style='thick', color='000000'),
+                top=Side(style='thick', color='000000'),
+                bottom=Side(style='thick', color='000000')
+            )
+
+            # Сохраняем файл
             wb.save(output_path)
-            QMessageBox.information(self, "Готово", f"Файл сохранен: {output_path}")
+
+            QMessageBox.information(
+                self, "Готово",
+                f"Объединено {len(all_tables_data)} таблиц в один лист\n"
+                f"Сохранено в: {output_path}"
+            )
 
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка обработки: {str(e)}")
@@ -1239,7 +1313,7 @@ QToolTip {
             wb = load_workbook(temp_output)
             ws = wb.active
 
-            # 6. Применяем всю логику обработки
+            # 6. Применяем логику оформления (без дублирования!)
             # Цвета
             fill_blue = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
             fill_pink = PatternFill(start_color="D02090", end_color="D02090", fill_type="solid")
@@ -1257,7 +1331,6 @@ QToolTip {
                 bottom=Side(style='thin', color='000000')
             )
 
-            # Обработка данных из оригинального файла
             col_values = []
             for row in range(3, 23):  # от A3 до A22
                 raw_value = original_ws.cell(row=row, column=1).value
@@ -1297,7 +1370,6 @@ QToolTip {
                 if value:
                     ws[cell_ref].value = value
 
-            # Остальная логика обработки (суммы, расчеты и т.д.)
             sum_j = 0
             for row in range(3, 53):  # J3:J52
                 raw_val = original_ws.cell(row=row, column=10).value  # колонка J = 10
@@ -1307,7 +1379,7 @@ QToolTip {
                     # Преобразуем в строку, убираем пробелы и "мм"
                     cleaned = str(raw_val).replace(" ", "").replace("мм", "").replace(",", ".").strip()
                     cleaned = re.sub(r"[^\d.]", "", cleaned)
-                    if cleaned and cleaned != '.':
+                    if cleaned and cleaned != '.':  # ← Проверка на пустую строку и точку
                         number = float(cleaned)
                         sum_j += number
                 except Exception as err:
@@ -1317,8 +1389,207 @@ QToolTip {
             # Записываем сумму в G5
             ws["G5"].value = sum_j
 
-            # Остальные расчеты и обработка
-            # ... [ваша полная логика обработки] ...
+            # Закрашиваем G5 болотным цветом
+            fill_olive = PatternFill(start_color="808000", end_color="808000", fill_type="solid")
+            ws["G5"].fill = fill_olive
+
+            max_row = ws.max_row
+            max_col = ws.max_column
+
+            for col in range(9, 12):
+                ws.cell(row=4, column=col).value = "мм"
+
+            ws["A5"].value = 1
+
+            # O5
+            try:
+                g5_value = float(ws["G5"].value or 0)
+                o5_value = float(user_data.get('o5', '0').replace(",", ".") or 0)
+                ws["O5"].value = round(o5_value * g5_value / 1000, 3)
+            except Exception as e:
+                print("Ошибка при расчете O5:", e)
+
+            # R5
+            try:
+                g5_value = float(ws["G5"].value or 0)
+                r5_value = float(user_data.get('r5', '0').replace(",", ".") or 0)
+                ws["R5"].value = round(r5_value * g5_value / 1000, 3)
+            except Exception as e:
+                print("Ошибка при расчете R5:", e)
+
+            # Остальная логика обработки...
+            # Обработка данных из столбцов K и L (перенос в столбцы S+)
+            start_row_source = 3  # начинаем с 3-й строки исходного листа
+            output_row = 3  # 3-я строка в целевом листе
+            column_offset = 0  # сдвиг по столбцам, начиная со столбца S (19)
+            empty_count = 0  # счётчик подряд пустых строк
+
+            while empty_count < 3:
+                k_value = original_ws.cell(row=start_row_source, column=11).value  # K = 11
+                l_value = original_ws.cell(row=start_row_source, column=12).value  # L = 12
+
+                if (k_value is None or str(l_value).strip() == "") and (l_value is None or str(k_value).strip() == ""):
+                    empty_count += 1
+                else:
+                    l_str = str(l_value).strip() if l_value is not None else ""
+                    k_str = str(k_value).strip() if k_value is not None else ""
+                    combined = (k_str + " " + l_str).strip()
+                    col_letter = get_column_letter(19 + column_offset)  # S = 19
+                    ws[f"{col_letter}{output_row}"] = combined
+
+                    column_offset += 1
+                    empty_count = 0  # сброс, т.к. строка не пустая
+
+                start_row_source += 1
+
+            # Обработка данных из столбцов F, C, I (для строки 5)
+            empty_count = 0
+            i = 3  # начинаем с F3
+            output_row = 5
+            column_offset = 0
+
+            while empty_count < 3:
+                f_cell = original_ws.cell(row=i, column=5)  # F = 6
+                f_value = f_cell.value
+
+                if f_value is None or str(f_value).strip() == "":
+                    empty_count += 1
+                    i += 1
+                    continue
+
+                f_value_clean = str(f_value).strip().lower()
+
+                if f_value_clean == "кг":
+                    value_to_write = original_ws.cell(row=i, column=9).value  # I = 9
+                    empty_count = 0
+                elif f_value_clean == "шт":
+                    value_to_write = original_ws.cell(row=i, column=3).value  # C = 3
+                    empty_count = 0
+                else:
+                    # если что-то другое (не "кг" и не "шт"), считаем как пустую
+                    empty_count += 1
+                    i += 1
+                    continue
+
+                col_letter = get_column_letter(19 + column_offset)  # S = 19
+                ws[f"{col_letter}{output_row}"] = value_to_write
+
+                column_offset += 1
+                i += 1
+
+            # Автоматическое заполнение для столбцов с "ШТ" в 4-й строке
+            start_row_source = 3  # начинаем с 3-й строки исходного листа
+            empty_count = 0
+            column_offset = 0
+
+            for col_idx in range(19, max_col + 1):
+                if col_idx <= ws.max_column:
+                    cell_4th_row = ws.cell(row=4, column=col_idx).value
+                    cell_1st_row = ws.cell(row=1, column=col_idx).value
+
+                    # ЕСЛИ В 4-Й СТРОКЕ "ШТ" - АВТОМАТИЧЕСКОЕ ЗАПОЛНЕНИЕ
+                    if cell_4th_row and str(cell_4th_row).strip().lower() == "шт" and cell_1st_row:
+                        text_to_analyze = str(cell_1st_row).strip()
+                        auto_value = ""
+
+                        # ТАБЛИЦА СООТВЕТСТВИЙ
+                        if re.search(r'Фланец переходной.*\d+-\d+.*\d+-\d+', text_to_analyze):
+                            auto_value = "09Г2С ФП-2024-КМД"
+                        elif re.search(r'Фланец \d-\d+-\d+', text_to_analyze):
+                            auto_value = "09Г2С ГОСТ 28759.2"
+                        elif re.search(r'Фланец \d+-\d+-\d+-\d+-\w', text_to_analyze):
+                            auto_value = "09Г2С ГОСТ33259-2015"
+                        elif re.search(r'Крышка \d-\d+-\d+', text_to_analyze):
+                            auto_value = "09Г2С ОСТ 26-2008-83"
+                        elif re.search(r'Заглушка \d-\d+-\d+', text_to_analyze):
+                            auto_value = "09Г2С АТК24.200.02-90"
+                        elif re.search(r'Прокладка СНП', text_to_analyze):
+                            auto_value = "ГОСТ Р 52376-2005"
+                        elif re.search(r'Прокладка \d+-\w+', text_to_analyze):
+                            auto_value = "ГОСТ 28759.6"
+                        elif re.search(r'Прокладка \w-\d+-\d+-\w+', text_to_analyze):
+                            auto_value = "ГОСТ 15180"
+                        elif re.search(r'Прокладка +ПМБ-\d+', text_to_analyze):
+                            auto_value = "ОСТ26.260.460-99"
+                        elif re.search(r'(Бобышка БПО|Пробка)', text_to_analyze):
+                            auto_value = "09Г2С ОСТ26.260.460-99"
+                        elif re.search(r'Муфта \d+', text_to_analyze):
+                            auto_value = "09Г2С ГОСТ 8966-75"
+                        elif re.search(r'Сгон \d+', text_to_analyze):
+                            auto_value = "09Г2С ГОСТ8969-75"
+                        elif re.search(r'Ниппель \d+', text_to_analyze):
+                            auto_value = "09Г2С ГОСТ8967-75"
+                        elif re.search(r'Отвод', text_to_analyze):
+                            auto_value = "09Г2С ГОСТ 17375-2001"
+                        elif re.search(r'Переход', text_to_analyze):
+                            auto_value = "09Г2С ГОСТ 17378-2001"
+                        elif re.search(r'Тройник', text_to_analyze):
+                            auto_value = "09Г2С ГОСТ 17376-2001"
+                        elif re.search(r'Болт', text_to_analyze):
+                            auto_value = "ГОСТ 7798-70"
+                        elif re.search(r'Гайка', text_to_analyze):
+                            auto_value = "ГОСТ 5915-70"
+                        elif re.search(r'Шайба \d+', text_to_analyze):
+                            auto_value = "ГОСТ 11371-78"
+                        elif re.search(r'Шпилька', text_to_analyze):
+                            auto_value = "09Г2С ГОСТ9066-75"
+                        elif re.search(r'Шплинт', text_to_analyze):
+                            auto_value = "ГОСТ 397-79"
+                        elif re.search(r'Электроды', text_to_analyze):
+                            auto_value = "ГОСТ9467-75"
+                        elif re.search(r'(Скоба|Штырь)', text_to_analyze):
+                            auto_value = "С245 ГОСТ17314-81"
+
+                        ws.cell(row=3, column=col_idx).value = auto_value
+
+                    # ИНАЧЕ - СТАРАЯ ЛОГИКА ПЕРЕНОСА ИЗ K И L
+                    else:
+                        k_value = original_ws.cell(row=start_row_source, column=11).value  # K = 11
+                        l_value = original_ws.cell(row=start_row_source, column=12).value  # L = 12
+
+                        if (k_value is None or str(k_value).strip() == "") and (
+                                l_value is None or str(l_value).strip() == ""):
+                            empty_count += 1
+                        else:
+                            k_str = str(k_value).strip() if k_value is not None else ""
+                            l_str = str(l_value).strip() if l_value is not None else ""
+                            combined = (k_str + " " + l_str).strip()
+
+                            ws.cell(row=3, column=col_idx).value = combined
+
+                            column_offset += 1
+                            empty_count = 0
+
+                        start_row_source += 1
+
+            # Применение стилей оформления
+            for row_idx in range(1, max_row + 1):
+                for col_idx in range(1, max_col + 1):
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    cell.border = border
+
+                    if row_idx == 1 and col_idx <= 19:
+                        cell.fill = fill_blue  # A1:S1
+
+                    if row_idx in [2, 3, 4] and col_idx in [9, 10, 11]:
+                        cell.fill = fill_blue  # J2:L3
+
+                    if row_idx == 1 and col_idx >= 19:
+                        cell.fill = fill_pink  # S1 и далее
+
+                    if row_idx == 3 and col_idx >= 19:
+                        cell.fill = fill_orange  # S3 и далее
+
+                    if row_idx == 4 and col_idx >= 19:
+                        cell.fill = fill_darkblue  # S4 и далее
+
+                    if row_idx == 1 and col_idx >= 19:
+                        top_cell_value = ws.cell(row=1, column=col_idx).value
+                        if top_cell_value:
+                            value_row1, value_row2 = self.process_value(top_cell_value)
+                            # Записываем в строку 1 и строку 2
+                            ws.cell(row=1, column=col_idx).value = value_row1
+                            ws.cell(row=2, column=col_idx).value = value_row2
 
             # 7. Собираем все данные из обработанного листа
             all_data = []
@@ -2085,11 +2356,13 @@ QToolTip {
 
             # Границы
             border = Border(
-                left=Side(style='thin', color='000000'),
-                right=Side(style='thin', color='000000'),
-                top=Side(style='thin', color='000000'),
-                bottom=Side(style='thin', color='000000')
+                left=Side(style='thick', color='000000'),
+                right=Side(style='thick', color='000000'),
+                top=Side(style='thick', color='000000'),
+                bottom=Side(style='thick', color='000000')
             )
+
+
 
             max_row = worksheet.max_row
             max_col = worksheet.max_column
