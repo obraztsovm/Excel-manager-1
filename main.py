@@ -552,53 +552,49 @@ QToolTip {
         self.animation.start()
 
     def process_value(self, text):
+        """Классификация значений для первой и второй строки"""
+        row1, row2 = "", ""
         text = str(text).strip()
-        lower_text = text.lower()
 
-        # КРУГ - самый высокий приоритет (первый символ Ø)
-        if text.startswith('Ø') or text.startswith('ø') or text.startswith('⌀'):
-            return text, "Круг"
+        # --- Первая строка ---
+        if text.lower().startswith("отвод"):  # Отвод ... → оставляем как есть
+            row1 = text
+        elif re.search(r'-(\d+)х\d+', text):  # "-12х34" → "t 12"
+            match = re.search(r'-(\d+)х\d+', text)
+            row1 = f"t {match.group(1)}"
+        elif "[8" in text:  # "[8" → "C8П"
+            row1 = "C8П"
+        elif text.lower().startswith("труба"):  # "Труба ..." → убрать "Труба"
+            match = re.match(r'^Труба\s+(.+)', text, re.IGNORECASE)
+            row1 = match.group(1) if match else text
 
-        # БОЛТ и ГАЙКА с приоритетом
-        if 'болт' in lower_text and '-' in text:
-            return text, "Болт"
+        else:
+            row1 = text
 
-        if 'гайка' in lower_text and '-' in text:
-            return text, "Гайка"
+        # --- Вторая строка ---
+        if row1 == "C8П":
+            row2 = "Швеллер"
+        elif "Отвод" in row1:
+            row2 = "Отвод"
+        elif "Болт" in row1:
+            row2 = "Болт"
+        elif "Гайка" in row1:
+            row2 = "Гайка"
+        elif "Шайба" in row1:
+            row2 = "Шайба"
+        elif row1.startswith("t "):  # t (что-то) → Лист
+            row2 = "Лист"
+        elif re.match(r'^[Ll]\s*\d+', row1):  # L(что-то)
+            row2 = "Уголок"
+        elif re.match(r'^Ø\d+.*x', row1, re.IGNORECASE):  # Ø(что-то)x
+            row2 = "Труба"
+        elif re.match(r'^Ø\d+', row1, re.IGNORECASE):  # Ø(что-то) без x
+            row2 = "Круг"
+        else:
+            # Берём первое слово из row1
+            row2 = row1.split()[0] if row1 else ""
 
-        if 'труба' in lower_text:
-            return text, "Труба"
-
-        if 'шайба' in lower_text:
-            return text, "Шайба"
-
-            # ЛИСТ - ТОЛЬКО строгий паттерн: -числохчисло
-            # Пример: -6х2235, -10х1000 и т.д.
-        if (re.search(r'-\d+[хx]\d+', text, re.IGNORECASE) and
-            'болт' not in lower_text and
-            'гайка' not in lower_text and
-            'бобышка' not in lower_text and
-            'пробка' not in lower_text and
-            'шпилька' not in lower_text):
-            return text, "Лист"
-
-        if text.startswith(('L', 'l')):
-            return text, "Уголок"
-
-        if text.startswith('['):
-            return text, "Швеллер"
-
-            # Последний случай - первое слово без цифр
-        words = text.split()
-        if words:
-            first_word = words[0]
-            # Просто убираем все не-буквы из первого слова
-            clean_word = ''.join(char for char in first_word if char.isalpha())
-            return text, clean_word or first_word
-
-        return text, "Unknown"
-
-
+        return row1, row2
 
     def setup_history_file(self):
         """Инициализирует путь к файлу истории"""
@@ -638,25 +634,26 @@ QToolTip {
         return label, combo
 
     def get_auto_value(self, text):
-        """Автоматическое заполнение для 3-й строки по тексту из 1-й строки"""
-        text = str(text).strip()
+        s = self._norm(text).strip()
+        if not s:
+            return ""
 
-        # Словарь правил (сначала специфичные, потом общие)
+        low = text.lower()
+        if "шайба" in low:
+            return "ГОСТ 11371-78"
+        if "лист" in low:
+            return "ГОСТ 19903-2015"
+        if "круг" in low:
+            return "ГОСТ 2590-2006"
+        # остальные правила (твоя старая таблица)
         rules = {
-            # Фланцы
             r'Фланец переходной.*': '09Г2С ФП-2024-КМД',
             r'Фланец \d-\d+-\d+': '09Г2С ГОСТ 28759.2',
             r'Фланец \d+-\d+-\d+-\d+-\w': '09Г2С ГОСТ33259-2015',
             r'Крышка \d-\d+-\d+': '09Г2С ОСТ 26-2008-83',
-            r'Заглушка \d-\d+-\d+': '09Г2С АТК24.200.02-90',
-
-            # Прокладки
             r'Прокладка СНП.*': 'ГОСТ Р 52376-2005',
             r'Прокладка \d+-\w+': 'ГОСТ 28759.6',
             r'Прокладка \w-\d+-\d+-\w+': 'ГОСТ 15180',
-            r'Прокладка \d+-\ПМБ': 'ОСТ26.260.460-99',
-
-            # Детали
             r'Бобышка БПО.*': '09Г2С ОСТ26.260.460-99',
             r'Пробка .*': '09Г2С ОСТ26.260.460-99',
             r'Муфта \d+': '09Г2С ГОСТ 8966-75',
@@ -665,25 +662,41 @@ QToolTip {
             r'Отвод.*': '09Г2С ГОСТ 17375-2001',
             r'Переход.*': '09Г2С ГОСТ 17378-2001',
             r'Тройник.*': '09Г2С ГОСТ 17376-2001',
-
-            # Крепеж
             r'Болт.*': 'ГОСТ 7798-70',
             r'Гайка.*': 'ГОСТ 5915-70',
-            r'Шайба \d+': 'ГОСТ 11371-78',
             r'Шпилька.*': '09Г2С ГОСТ9066-75',
             r'Шплинт.*': 'ГОСТ 397-79',
             r'Электроды.*': 'ГОСТ9467-75',
-            r'Скоба.*': 'С245 ГОСТ17314-81',
-            r'Штырь.*': 'С245 ГОСТ17314-81'
+            r'(Скоба|Штырь).*': 'С245 ГОСТ17314-81'
         }
 
-        # Ищем совпадение по правилам
         for pattern, auto_value in rules.items():
-            if re.search(pattern, text, re.IGNORECASE):
+            if re.search(pattern, s, re.IGNORECASE):
                 return auto_value
 
-        return ""  # Если не нашли совпадение
+        return ""
 
+    def get_gost_by_row2_or_row1(self, row2_text, row1_text):
+        row2 = self._norm(row2_text).strip().lower() if row2_text else ""
+        row1 = self._norm(row1_text).strip()
+
+        # если во 2-й строке явно "Шайба" — приоритет
+        if row2 and re.search(r'\bшайб', row2, re.IGNORECASE):
+            return 'ГОСТ 11371-78'
+
+        # если во 2-й строке явно "Лист" (или начинается с "t ") — используем ЛИСТ-логику:
+        if row2 and (row2.startswith('лист') or row2.startswith('l ') or row2.startswith('t ')):
+            # здесь можно вернуть жёстко заданный ГОСТ для Листа, или попытаться вычислить по row1
+            # я возвращаю fallback по row1 (твоя старая таблица), т.к. чаще Гост определяется по наименованию
+            return self.get_auto_value(row1)
+
+        # если во 2-й строке "круг" — можно вернуть явный гост (если есть), иначе fallback
+        if row2 and re.search(r'\bкруг\b', row2, re.IGNORECASE):
+            # если у тебя есть ГОСТ для круга — верни его прямо, например: return 'ГОСТ ХХХ'
+            return self.get_auto_value(row1)
+
+        # иначе — fallback на логику по 1-й строке
+        return self.get_auto_value(row1)
 
     def load_history(self):
         """Загружает историю из файла при запуске"""
@@ -1539,6 +1552,8 @@ QToolTip {
                             auto_value = "ГОСТ9467-75"
                         elif re.search(r'(Скоба|Штырь)', text_to_analyze):
                             auto_value = "С245 ГОСТ17314-81"
+
+
 
                         ws.cell(row=3, column=col_idx).value = auto_value
 
